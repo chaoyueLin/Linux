@@ -83,5 +83,69 @@ cup使用率
         RES:    2450431    5279697   Rescheduling interrupts
         ...
 
-总结：
-首先通过uptime查看系统负载，然后使用mpstat结合pidstat来初步判断到底是cpu计算量大还是进程争抢过大或者是io过多，接着使用vmstat分析切换次数，以及切换类型，来进一步判断到底是io过多导致问题还是进程争抢激烈导致问题。
+**总结：首先通过uptime查看系统负载，然后使用mpstat结合pidstat来初步判断到底是cpu计算量大还是进程争抢过大或者是io过多，接着使用vmstat分析切换次数，以及切换类型，来进一步判断到底是io过多导致问题还是进程争抢激烈导致问题。**
+
+## CPU使用率
+使用top
+
+        # 默认每3秒刷新一次
+        $ top
+        top - 11:58:59 up 9 days, 22:47,  1 user,  load average: 0.03, 0.02, 0.00
+        Tasks: 123 total,   1 running,  72 sleeping,   0 stopped,   0 zombie
+        %Cpu(s):  0.3 us,  0.3 sy,  0.0 ni, 99.3 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+        KiB Mem :  8169348 total,  5606884 free,   334640 used,  2227824 buff/cache
+        KiB Swap:        0 total,        0 free,        0 used.  7497908 avail Mem
+
+        PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+        1 root      20   0   78088   9288   6696 S   0.0  0.1   0:16.83 systemd
+        2 root      20   0       0      0      0 S   0.0  0.0   0:00.05 kthreadd
+        4 root       0 -20       0      0      0 I   0.0  0.0   0:00.00 kworker/0:0H
+        ...
+
+* user（通常缩写为 us），代表用户态 CPU 时间。注意，它不包括下面的 nice 时间，但包括了 guest 时间。
+* nice（通常缩写为 ni），代表低优先级用户态 CPU 时间，也就是进程的 nice 值被调整为 1-19 之间时的 CPU 时间。这里注意，nice 可取值范围是 -20 到 19，数值越大，优先级反而越低。
+* system（通常缩写为 sys），代表内核态 CPU 时间。
+* idle（通常缩写为 id），代表空闲时间。注意，它不包括等待 I/O 的时间（iowait）。
+* iowait（通常缩写为 wa），代表等待 I/O 的 CPU 时间。
+* irq（通常缩写为 hi），代表处理硬中断的 CPU 时间。
+* softirq（通常缩写为 si），代表处理软中断的 CPU 时间。
+* steal（通常缩写为 st），代表当系统运行在虚拟机中的时候，被其他虚拟机占用的 CPU 时间。
+* guest（通常缩写为 guest），代表通过虚拟化运行其他操作系统的时间，也就是运行虚拟机的 CPU 时间。
+* guest_nice（通常缩写为 gnice），代表以低优先级运行虚拟机的时间。
+
+进程都有一个 %CPU 列，表示进程的 CPU 使用率。它是用户态和内核态 CPU 使用率的总和，包括进程用户空间使用的 CPU、通过系统调用执行的内核空间 CPU 、以及在就绪队列等待运行的 CPU。在虚拟化环境中，它还包括了运行虚拟机占用的 CPU
+
+使用pidstat
+
+
+        # 每隔1秒输出一组数据，共输出5组
+        $ pidstat 1 5
+        15:56:02      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+        15:56:03        0     15006    0.00    0.99    0.00    0.00    0.99     1  dockerd
+
+        ...
+
+        Average:      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+        Average:        0     15006    0.00    0.99    0.00    0.00    0.99     -  dockerd
+
+使用perf top
+
+
+        $ perf top
+        Samples: 833  of event 'cpu-clock', Event count (approx.): 97742399
+        Overhead  Shared Object       Symbol
+        7.28%  perf                [.] 0x00000000001f78a4
+        4.72%  [kernel]            [k] vsnprintf
+        4.32%  [kernel]            [k] module_get_kallsym
+        3.65%  [kernel]            [k] _raw_spin_unlock_irqrestore
+        ...
+
+* 第一列 Overhead ，是该符号的性能事件在所有采样中的比例，用百分比来表示。
+* 第二列 Shared ，是该函数或指令所在的动态共享对象（Dynamic Shared Object），如内核、进程名、动态链接库名、内核模块名等。
+* 第三列 Object ，是动态共享对象的类型。比如 [.] 表示用户空间的可执行程序、或者动态链接库，而 [k] 则表示内核空间。
+* 最后一列 Symbol 是符号名，也就是函数名。当函数名未知时，用十六进制的地址来表示。
+
+调用关系
+
+        # -g开启调用关系分析，-p指定php-fpm的进程号21515
+        $ perf top -g -p 21515
